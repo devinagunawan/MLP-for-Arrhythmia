@@ -1,0 +1,87 @@
+## MLP MODEL TRAINING AND EVALUATION SCRIPT FOR GOOGLE COLAB 
+## File Name: MLPClassifier Softmax.ipynb
+
+
+import numpy as np
+import os
+from skimage.io import imread
+from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+
+
+# Define image folders
+NSR_path   = "/content/drive/MyDrive/MLP/NSR"
+PREX_path  = "/content/drive/MyDrive/MLP/PREX"
+AFIB_path  = "/content/drive/MyDrive/MLP/AFIB"
+SVTA_path  = "/content/drive/MyDrive/MLP/SVTA"
+VT_path    = "/content/drive/MyDrive/MLP/VT"
+
+
+X = []
+y = []
+
+
+# Load images from each folder (Google Drive Dataset Link)
+def load_images_from_folder(folder_path, label):
+   for filename in os.listdir(folder_path):
+       img_path = os.path.join(folder_path, filename)
+       if os.path.isfile(img_path):
+           img = imread(img_path, as_gray=True)
+           if img.shape == (32, 32):
+               img_flattened = img.flatten() / 255.0
+               X.append(img_flattened)
+               y.append(label)
+
+
+load_images_from_folder(NSR_path, 0)
+load_images_from_folder(PREX_path, 1)
+load_images_from_folder(AFIB_path, 2)
+load_images_from_folder(SVTA_path, 3)
+load_images_from_folder(VT_path, 4)
+# Convert to NumPy arrays
+X = np.array(X)
+y = np.array(y)
+
+
+# Class names
+target_names = ["NSR", "PREX", "AFIB", "SVTA", "VT"]
+
+
+# Split data (80% train, 20% test)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+
+# Define and train model
+clf = MLPClassifier(hidden_layer_sizes=(32, 16), activation='relu', solver='adam', max_iter=1000, random_state=42)
+clf.fit(X_train, y_train)
+
+
+# Accuracy
+print(f"Training Accuracy: {clf.score(X_train, y_train) * 100:.2f}%")
+print(f"Test Accuracy: {clf.score(X_test, y_test) * 100:.2f}%")
+
+
+# Predictions from test split
+y_pred_testset = clf.predict(X_test)
+
+
+# Classification Report
+print("\nClassification Report (from test split):")
+print(classification_report(y_test, y_pred_testset, target_names=target_names))
+print(f"Test Set Accuracy: {accuracy_score(y_test, y_pred_testset) * 100:.2f}%")
+
+
+# Confusion Matrix (as percentages)
+cm_test = confusion_matrix(y_test, y_pred_testset)
+cm_percent = cm_test.astype('float') / cm_test.sum(axis=1)[:, np.newaxis] * 100
+
+
+# Display matrix
+print("\nConfusion Matrix (% per true class):")
+print(np.round(cm_percent, 2))
+
+
+# Plot confusion matrix
+disp = ConfusionMatrixDisplay(confusion_matrix=np.round(cm_percent, 2), display_labels=target_names)
+disp.plot(cmap="Blues", values_format=".2f")
