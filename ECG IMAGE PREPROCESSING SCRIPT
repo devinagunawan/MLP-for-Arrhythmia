@@ -1,0 +1,170 @@
+## ECG IMAGE PREPROCESSING SCRIPT
+## File Name: ECG_Resampling_Preprocessing.py
+
+
+import wfdb
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+from scipy.signal import medfilt, butter, filtfilt, find_peaks, resample
+from PIL import Image
+
+
+# Constants
+TARGET_FS = 200     # resampling frequency
+PQRST_WINDOW = 80   # sample each PQRST
+MAX_SEGMENTS = 500  # max per record
+
+
+# Median Filter (Baseline Correction)
+def baseline_correction(ecg_signal):
+   return ecg_signal - medfilt(ecg_signal, kernel_size=121)
+
+
+# Bandpass Filter
+def bandpass_filter(ecg_signal, lowcut=0.5, highcut=50.0, fs=200, order=4):
+   nyquist = 0.5 * fs
+   b, a = butter(order, [lowcut / nyquist, highcut / nyquist], btype="band")
+   return filtfilt(b, a, ecg_signal)
+
+
+def detect_r_peaks(ecg_signal, fs=200):
+   peaks, _ = find_peaks(ecg_signal, height=np.mean(ecg_signal) + 0.5*np.std(ecg_signal), distance=int(fs*0.6))
+   return peaks
+
+
+# Load File and select MLII Lead
+def load_ecg(record_name, path):
+   record = wfdb.rdrecord(os.path.join(path, record_name))
+   channel_names = record.sig_name
+   idx = channel_names.index("MLII") if "MLII" in channel_names else 0
+   signal = record.p_signal[:, idx]
+
+
+   # Resample from original fs to TARGET_FS if needed
+   original_fs = record.fs
+   if original_fs != TARGET_FS:
+       duration_sec = len(signal) / original_fs
+       target_length = int(duration_sec * TARGET_FS)
+       signal = resample(signal, target_length)
+
+
+   signal = baseline_correction(signal)
+   signal = bandpass_filter(signal, fs=TARGET_FS)
+
+
+   # Normalize the signal to 8-bit grayscale range (0–255)
+   signal = ((signal - np.min(signal)) / (np.max(signal) - np.min(signal)) * 255).astype(np.uint8)
+   return signal
+
+
+def get_afib_ranges(record_name, path):
+   # Read annotations from the MIT-BIH database
+   ann = wfdb.rdann(os.path.join(path, record_name), "atr")
+   ranges = []
+   current_start = None
+
+
+   # Loop through each annotation note
+   for i, note in enumerate(ann.aux_note):
+       clean_note = note.strip("\x00").strip()
+       if clean_note == "(AFIB":        # Change accordingly
+           if current_start is None:
+               current_start = ann.sample[i]
+       elif clean_note.startswith("(") and current_start is not None:
+           current_end = ann.sample[i]
+           ranges.append((current_start, current_end))
+           current_start = None
+
+
+   if current_start is not None:
+       ranges.append((current_start, ann.sample[-1]))
+
+
+   return ranges
+
+
+# Extract PQRST-length segments from AFIB periods
+def extract_afib_segments(ecg_signal, fs, afib_ranges):
+   r_peaks = detect_r_peaks(ecg_signal, fs)
+   segments = []
+
+
+   for start, end in afib_ranges:
+       # Rescale start and end if fs changed
+       scale = TARGET_FS / 360.0
+       start = int(start * scale)
+       end = int(end * scale)
+
+
+       r_in_range = [r for r in r_peaks if start <= r <= end]
+       for r in r_in_range:
+           # Define PQRST segment window centered at R-peak
+           start_idx = max(0, r - PQRST_WINDOW // 2)
+           end_idx = start_idx + PQRST_WINDOW
+           if end_idx <= len(ecg_signal):
+               segment = ecg_signal[start_idx:end_idx]
+               if len(segment) == PQRST_WINDOW:
+                   segments.append(segment)
+           if len(segments) >= MAX_SEGMENTS:
+               return segments
+   return segments
+
+
+# Save one segment as a grayscale image (32x32)
+def save_segment_as_image(segment, save_path, record_name, idx):
+   # Change according to the arrhythmia class
+   folder_path = os.path.join(save_path, "AF")  
+   os.makedirs(folder_path, exist_ok=True)
+
+
+   temp_path = os.path.join(folder_path, f"{record_name}_segment_{idx}_temp.png")
+   final_path = os.path.join(folder_path, f"{record_name}_segment_{idx}.png")
+
+
+   plt.figure(figsize=(6, 3))
+   plt.plot(segment, color="black", linewidth=1)
+   plt.axis('off')
+   plt.savefig(temp_path, bbox_inches='tight', pad_inches=0, dpi=300)
+   plt.close()
+
+
+   img = Image.open(temp_path).convert("L")
+   img = img.resize((32, 32), Image.Resampling.LANCZOS)
+   img.save(final_path)
+   os.remove(temp_path)
+
+
+def process_record_afib(path, record_name):
+   output_path = os.path.join(path, "Processed_Images_PQRST_32x32_R")
+   os.makedirs(output_path, exist_ok=True)
+
+
+   ecg_signal = load_ecg(record_name, path)
+   afib_ranges = get_afib_ranges(record_name, path)
+   segments = extract_afib_segments(ecg_signal, TARGET_FS, afib_ranges)
+
+
+   for idx, segment in enumerate(segments):
+       save_segment_as_image(segment, output_path, record_name, idx)
+
+
+   print(f"Saved {len(segments)} AFIB segments from record {record_name}.")
+
+
+
+
+# Main function to process multiple records
+def main():
+   path = "/Users/devinagunawan/Downloads/MITBIH Arrhythmia"
+   # List of record ID containing AFIB (change accordingly)
+   record_list = ["202", "210", "217", "219", "221"]
+
+
+   for record_name in record_list:
+       process_record_afib(path, record_name)
+
+
+# Run the script
+if __name__ == "__main__":
+   main()
