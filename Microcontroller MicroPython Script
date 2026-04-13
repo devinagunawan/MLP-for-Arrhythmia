@@ -1,0 +1,104 @@
+## FINAL SCRIPT FOR MICROCONTROLLER DEPLOYMENT 
+## File Name: MCU_Deployment.py
+
+
+import time
+
+
+# Load bias (1D vector)
+def load_bias(filename, num_neurons):
+   with open(filename, "r") as f:
+       line = f.readline()
+   return [float(b) for b in line.strip().split(",")[:num_neurons]]
+
+
+# Load test image (flattened)
+def load_test_image():
+   with open("209_segment_114.txt", "r") as f:
+       raw = f.read().replace("\n", "").split(",")
+       return [float(i.strip()) for i in raw if i.strip().replace('.', '', 1).replace('-', '', 1).isdigit()]
+
+
+# ReLU function
+def relu(x):
+   return max(0, x)
+
+
+# Softmax function
+def softmax(logits):
+   max_logit = max(logits)
+   exp_scores = [pow(2.718, logit - max_logit) for logit in logits]
+   sum_exp = sum(exp_scores)
+   return [score / sum_exp for score in exp_scores]
+
+
+# Hidden layer computation
+def forward_layer_streamed(inputs, weights_file, bias_file, num_neurons):
+   biases = load_bias(bias_file, num_neurons)
+   output = []
+   with open(weights_file, "r") as f:
+       for j, line in enumerate(f):
+           weights = [float(w) for w in line.strip().split(",")]
+           if len(weights) != len(inputs):
+               raise ValueError(f"Mismatch: input size = {len(inputs)}, weights[{j}] size = {len(weights)}")
+           neuron_sum = sum(inputs[i] * weights[i] for i in range(len(inputs))) + biases[j]
+           output.append(relu(neuron_sum))
+           if j + 1 >= num_neurons:
+               break
+   return output
+
+
+
+
+# Output layer with softmax
+def output_layer_softmax(inputs, weights_file, bias_file, num_classes=5):
+   biases = load_bias(bias_file, num_classes)
+   logits = []
+
+
+   with open(weights_file, "r") as f:
+       for j, line in enumerate(f):
+           weights = [float(w) for w in line.strip().split(",")]
+           if len(weights) != len(inputs):
+               raise ValueError(f"Mismatch: input size = {len(inputs)}, weights[{j}] size = {len(weights)}")
+           logit = sum(inputs[i] * weights[i] for i in range(len(inputs))) + biases[j]
+           logits.append(logit)
+           if j + 1 >= num_classes:
+               break
+   return softmax(logits)
+
+
+# MLP prediction pipeline
+def mlp_predict(x):
+   l1 = forward_layer_streamed(x, "weights_layer0.txt", "biases_layer0.txt", 32)
+   l2 = forward_layer_streamed(l1, "weights_layer1.txt", "biases_layer1.txt", 16)
+   probs = output_layer_softmax(l2, "weights_layer2.txt", "biases_layer2.txt", 5)
+
+
+   predicted_class = probs.index(max(probs))
+   return predicted_class, probs
+
+
+# Load test image and run prediction
+x_input = load_test_image()
+
+
+start_time = time.time()
+class_id, probabilities = mlp_predict(x_input)
+end_time = time.time()
+
+
+# Class names (adjust as needed)
+class_names = [
+   "Normal Sinus Rhythm",
+   "PREX Rhythm",
+   "AFib Rhythm",
+   "Supraventricular Tachyarrhythmia",
+   "Ventricular Tachycardia"
+]
+
+
+# Output
+print("Prediction:", class_names[class_id])
+print("Probabilities:", probabilities)
+print(f"Time taken for prediction: {end_time - start_time:.4f} seconds")
